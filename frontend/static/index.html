@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LocalPhylogeo</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>LocalPhylogeo</h1>
+      <p>Visualise continuous phylogeographic MCC trees locally.</p>
+    </header>
+    <main>
+      <div class="workspace" id="workspace">
+        <button
+          id="sidebar-handle"
+          class="ghost-button sidebar-handle"
+          type="button"
+          aria-controls="sidebar"
+          aria-expanded="true"
+        >
+          Show Controls
+        </button>
+        <aside id="sidebar">
+          <div class="sidebar-top">
+            <button id="toggle-sidebar" class="ghost-button" type="button">Hide Controls</button>
+          </div>
+          <div class="sidebar-section">
+            <h2 class="sidebar-heading">File Input</h2>
+            <div class="control-set">
+              <div class="control-field">
+                <label for="tree-file">Upload MCC Tree</label>
+                <input type="file" id="tree-file" accept=".tree,.nexus,.nex,.newick,.nwk" />
+              </div>
+              <button id="upload-btn" type="button">Upload &amp; Render</button>
+            </div>
+            <div class="control-set">
+              <div class="control-field">
+                <label for="metadata-file">Metadata (TSV/CSV)</label>
+                <input type="file" id="metadata-file" accept=".tsv,.csv,.txt" />
+              </div>
+              <button id="metadata-btn" type="button">Apply Metadata</button>
+            </div>
+            <span id="status" class="status-message"></span>
+          </div>
+          <div class="sidebar-section">
+            <h2 class="sidebar-heading">Tree &amp; Operations</h2>
+            <div class="viz-controls">
+              <div class="control-block">
+                <label for="color-select">Color By</label>
+                <select id="color-select">
+                  <option value="auto" selected>Auto (best trait)</option>
+                </select>
+              </div>
+              <div class="control-block">
+                <label for="layout-select">Tree Layout</label>
+                <select id="layout-select">
+                  <option value="time" selected>Time (rectangular)</option>
+                  <option value="cladogram">Cladogram</option>
+                </select>
+              </div>
+              <div class="control-block">
+                <label for="node-size">Node Size</label>
+                <input type="range" id="node-size" min="3" max="9" step="1" value="5" />
+              </div>
+              <div class="control-block">
+                <label for="color-direction">Color Direction</label>
+                <select id="color-direction">
+                  <option value="increasing" selected>Increasing</option>
+                  <option value="decreasing">Decreasing</option>
+                </select>
+              </div>
+              <div class="control-block">
+                <label for="hpd-select">HPD Overlay</label>
+                <select id="hpd-select">
+                  <option value="none" selected>None</option>
+                  <option value="location80">Location 80% HPD</option>
+                </select>
+              </div>
+              <div class="control-block">
+                <label for="hpd-color">HPD Colour</label>
+                <input type="color" id="hpd-color" value="#f97316" />
+              </div>
+              <div class="control-block">
+                <label for="sort-select">Sort Tips</label>
+                <select id="sort-select">
+                  <option value="increasing" selected>Increasing (oldest to newest)</option>
+                  <option value="decreasing">Decreasing (newest to oldest)</option>
+                </select>
+              </div>
+              <div class="control-block">
+                <label for="latest-date">Latest Sampling Date</label>
+                <input type="date" id="latest-date" />
+              </div>
+              <div class="control-inline">
+                <label>
+                  <input type="checkbox" id="toggle-labels" />
+                  Show tip labels
+                </label>
+              </div>
+              <div class="control-inline">
+                <label>
+                  <input type="checkbox" id="enable-brush" />
+                  Enable brush selection
+                </label>
+                <span class="control-hint">Drag to select branches and sync them with the map.</span>
+              </div>
+              <button id="reset-tree" type="button" class="ghost-button">Reset View</button>
+              <button id="export-tree" type="button" class="ghost-button">Download Tree SVG</button>
+              <div class="download-group">
+                <label>Map Export</label>
+                <button id="export-map-geojson" type="button" class="ghost-button">Download GeoJSON</button>
+                <button id="export-map-image" type="button" class="ghost-button">Download PNG</button>
+              </div>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <h2 class="sidebar-heading">Map &amp; Operations</h2>
+            <div class="control-set">
+              <div class="control-field">
+                <label for="map-tile-url">Custom Map Link</label>
+                <input
+                  type="url"
+                  id="map-tile-url"
+                  placeholder="https://{s}.tile.example.com/{z}/{x}/{y}.png"
+                  inputmode="url"
+                />
+                <span class="control-hint">Provide a tile layer template URL with {z}/{x}/{y} placeholders.</span>
+              </div>
+              <button id="apply-map-link" type="button">Apply Link</button>
+            </div>
+            <div class="control-set">
+              <div class="control-field">
+                <label for="map-config-file">Map Config (JSON)</label>
+                <input type="file" id="map-config-file" accept=".json" />
+                <span class="control-hint">Upload a JSON file containing a `tileUrl` and optional settings.</span>
+              </div>
+              <button id="apply-map-config" type="button">Upload Config</button>
+            </div>
+            <button id="reset-map" type="button" class="ghost-button">Use Default Map</button>
+            <span id="map-status" class="status-message"></span>
+          </div>
+        </aside>
+        <div class="content-area">
+          <section class="visual-grid">
+            <div class="tree-map-container" id="tree-map-container">
+              <div class="tree-panel-wrapper" id="tree-panel-wrapper">
+                <div class="panel" id="tree-panel">
+                  <h2>Phylogeny</h2>
+                  <p class="panel-note">Enable brush selection to drag across clades and inspect them alongside the map.</p>
+                  <div class="panel-body resizable-viewport" id="tree-viz-container">
+                    <svg id="tree-viz"></svg>
+                    <div
+                      id="tree-height-resizer"
+                      class="panel-resizer horizontal"
+                      role="separator"
+                      tabindex="0"
+                      aria-label="Resize tree panel height"
+                    ></div>
+                  </div>
+                </div>
+                <div id="selection-info" class="selection-info">Click tree nodes to see details.</div>
+              </div>
+              <div
+                id="tree-map-resizer"
+                class="split-handle vertical"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize tree and map panels"
+                tabindex="0"
+              ></div>
+              <div class="panel" id="map-panel">
+                <h2>Geographic Spread</h2>
+                <div class="panel-body resizable-viewport" id="map-view-container">
+                  <div id="map"></div>
+                  <div
+                    id="map-height-resizer"
+                    class="panel-resizer horizontal"
+                    role="separator"
+                    tabindex="0"
+                    aria-label="Resize map panel height"
+                  ></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel" id="migration-panel">
+              <h2>Migration Timeline</h2>
+              <p class="panel-note">Play or scrub to reveal dispersal events synchronised with the tree.</p>
+              <div class="timeline-controls">
+                <button id="play-migration" type="button" class="ghost-button" disabled>Play</button>
+                <input type="range" id="timeline-slider" min="0" max="1" step="0.01" value="0" disabled />
+                <span id="timeline-label">No timeline</span>
+              </div>
+            </div>
+          </section>
+          <section class="panel traits" id="traits-panel">
+            <h2>Trait Summary</h2>
+            <div class="trait-controls">
+              <div>
+                <label for="trait-search">Filter traits</label>
+                <input type="text" id="trait-search" placeholder="Search trait" />
+              </div>
+              <div>
+                <label for="trait-limit">Max categories</label>
+                <select id="trait-limit">
+                  <option value="5">Top 5</option>
+                  <option value="10" selected>Top 10</option>
+                  <option value="20">Top 20</option>
+                  <option value="all">Show all</option>
+                </select>
+              </div>
+            </div>
+            <div id="trait-summary"></div>
+          </section>
+          <section class="panel" id="discrete-panel">
+            <h2>Discrete Pathways</h2>
+            <p class="panel-note">Infer root origin probabilities and leading discrete trajectories. Optionally upload BSSVS / Markov jumps logs to merge support.</p>
+            <div class="analysis-controls">
+              <div class="control-field">
+                <label for="support-file">BSSVS / Markov jumps (optional)</label>
+                <input type="file" id="support-file" accept=".csv,.tsv,.log,.txt" />
+              </div>
+              <div class="control-field">
+                <label for="path-top-k">Top paths</label>
+                <input type="number" id="path-top-k" min="1" max="25" step="1" value="10" />
+              </div>
+              <button id="run-discrete-analysis" class="ghost-button" type="button">Run Analysis</button>
+            </div>
+            <span id="discrete-status" class="status-message"></span>
+            <div class="analysis-grid">
+              <div>
+                <h3>Root Origin Posterior</h3>
+                <table class="analysis-table" id="root-origin-table">
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Location</th>
+                      <th>Posterior</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div>
+                <h3>Main Pathways</h3>
+                <table class="analysis-table" id="pathways-table">
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Path</th>
+                      <th>Weight</th>
+                      <th>Time (median)</th>
+                      <th>95% HPD</th>
+                      <th>Support</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="analysis-downloads">
+              <h3>Downloads</h3>
+              <div class="download-row">
+                <a id="download-nodes" class="ghost-button is-disabled" href="#" download="nodes.csv">Nodes CSV</a>
+                <a id="download-edges" class="ghost-button is-disabled" href="#" download="edges.csv">Edges CSV</a>
+                <a id="download-geojson" class="ghost-button is-disabled" href="#" download="map.geojson">Map GeoJSON</a>
+                <a id="download-summary" class="ghost-button is-disabled" href="#" download="summary.md">Summary</a>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="comparison-panel">
+            <h2>Tree Comparison</h2>
+            <p class="panel-note">Upload or link multiple MCC trees to compare discrete spread pathways across scenarios.</p>
+            <div class="comparison-controls">
+              <div class="control-set">
+                <div class="control-field">
+                  <label for="comparison-files">Upload trees for comparison</label>
+                  <input type="file" id="comparison-files" accept=".tree,.nexus,.nex,.newick,.nwk" multiple />
+                  <span class="control-hint">Files are stored under the backend data directory for re-use.</span>
+                </div>
+                <button id="comparison-upload-btn" type="button">Upload Files</button>
+              </div>
+              <div class="control-set">
+                <div class="control-field">
+                  <label for="comparison-manual-filename">Add existing tree path</label>
+                  <input type="text" id="comparison-manual-filename" placeholder="data/first.tree" />
+                </div>
+                <div class="control-field">
+                  <label for="comparison-manual-label">Label (optional)</label>
+                  <input type="text" id="comparison-manual-label" placeholder="Outbreak A" />
+                </div>
+                <button id="comparison-add-manual" type="button">Add Tree</button>
+              </div>
+              <div class="control-set">
+                <div class="control-field">
+                  <label for="comparison-top-k">Top divergent paths</label>
+                  <input type="number" id="comparison-top-k" min="1" max="50" step="1" value="10" />
+                </div>
+                <button id="comparison-run-btn" type="button">Compare Selected Trees</button>
+                <button id="comparison-clear-btn" type="button" class="ghost-button">Clear List</button>
+              </div>
+            </div>
+            <span id="comparison-status" class="status-message"></span>
+            <div id="comparison-tree-list" class="comparison-tree-list"></div>
+            <div class="analysis-grid comparison-results">
+              <div>
+                <h3>Per-tree Summaries</h3>
+                <table class="analysis-table" id="comparison-trees-table">
+                  <thead>
+                    <tr>
+                      <th>Label</th>
+                      <th>Analysis ID</th>
+                      <th>Root origin</th>
+                      <th>Strongest path</th>
+                      <th>Downloads</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div>
+                <h3>Path Differences</h3>
+                <table class="analysis-table" id="comparison-paths-table">
+                  <thead>
+                    <tr>
+                      <th>Rank</th>
+                      <th>Path</th>
+                      <th>Leading tree</th>
+                      <th>Δ weight</th>
+                      <th>Per-tree weights</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://d3js.org/d3.v7.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha256-bDp2IONQnYTbTa3YL6hFLaeL5MIcAvPPQgPzdrPzlU8=" crossorigin="anonymous"></script>
+    <script src="js/main.js?v=0.2"></script>
+  </body>
+</html>
