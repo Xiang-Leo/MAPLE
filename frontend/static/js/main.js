@@ -42,6 +42,9 @@ const supportFileInput = document.getElementById('support-file');
 const pathTopKInput = document.getElementById('path-top-k');
 const runDiscreteAnalysisButton = document.getElementById('run-discrete-analysis');
 const discreteStatusEl = document.getElementById('discrete-status');
+const migrationMatrixButton = document.getElementById('refresh-migration-matrix');
+const migrationMatrixStatusEl = document.getElementById('migration-matrix-status');
+const migrationMatrixTable = document.getElementById('migration-matrix-table');
 const rootPosteriorTable = document.getElementById('root-origin-table');
 const pathwaysTable = document.getElementById('pathways-table');
 const downloadNodesLink = document.getElementById('download-nodes');
@@ -1523,6 +1526,18 @@ function setMapStatus(message = '', isError = false) {
   mapStatusEl.style.color = isError ? '#b91c1c' : '#1b4965';
 }
 
+function setMigrationMatrixStatus(message = '', isError = false) {
+  if (!migrationMatrixStatusEl) {
+    return;
+  }
+  migrationMatrixStatusEl.textContent = message;
+  if (!message) {
+    migrationMatrixStatusEl.style.color = '';
+    return;
+  }
+  migrationMatrixStatusEl.style.color = isError ? '#b91c1c' : '#1b4965';
+}
+
 function isValidTileTemplate(url) {
   if (typeof url !== 'string') {
     return false;
@@ -1923,6 +1938,62 @@ function renderMap(payload) {
 function renderTraits(payload) {
   traitSummaryCache = summarizeTraits(payload.nodes);
   updateTraitSummary();
+}
+
+function renderMigrationMatrixTable(matrixPayload) {
+  if (!migrationMatrixTable) {
+    return;
+  }
+  const thead = migrationMatrixTable.querySelector('thead');
+  const tbody = migrationMatrixTable.querySelector('tbody');
+  if (!thead || !tbody) {
+    return;
+  }
+  thead.textContent = '';
+  tbody.textContent = '';
+
+  const sources = Array.isArray(matrixPayload?.sources) ? matrixPayload.sources : [];
+  const targets = Array.isArray(matrixPayload?.targets) ? matrixPayload.targets : [];
+  const counts = Array.isArray(matrixPayload?.counts) ? matrixPayload.counts : [];
+
+  if (!sources.length || !targets.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = Math.max(2, targets.length + 1);
+    cell.textContent = 'No migration events available.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  const headerRow = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.textContent = 'Source \\ Target';
+  corner.scope = 'col';
+  headerRow.appendChild(corner);
+  targets.forEach((target) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = target;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+
+  sources.forEach((source, sourceIndex) => {
+    const tr = document.createElement('tr');
+    const labelCell = document.createElement('th');
+    labelCell.scope = 'row';
+    labelCell.textContent = source;
+    tr.appendChild(labelCell);
+    const rowCounts = Array.isArray(counts[sourceIndex]) ? counts[sourceIndex] : [];
+    targets.forEach((target, targetIndex) => {
+      const td = document.createElement('td');
+      const value = Number(rowCounts[targetIndex]) || 0;
+      td.textContent = value.toString();
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
 }
 
 function downloadTreeSVG() {
@@ -3463,6 +3534,51 @@ async function render(forceFetch = true, filename = null) {
   }
 }
 
+async function fetchMigrationMatrix() {
+  if (!migrationMatrixTable) {
+    return;
+  }
+  if (migrationMatrixButton) {
+    migrationMatrixButton.disabled = true;
+  }
+  setMigrationMatrixStatus('Fetching migration matrix…');
+  try {
+    const params = new URLSearchParams();
+    if (currentFilename) {
+      params.set('filename', currentFilename);
+    }
+    const url = params.toString()
+      ? `/api/analysis/migration/matrix?${params.toString()}`
+      : '/api/analysis/migration/matrix';
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Server responded with ${response.status}`);
+    }
+    const payload = await response.json();
+    renderMigrationMatrixTable(payload);
+    const sourceCount = Array.isArray(payload.sources) ? payload.sources.length : 0;
+    const targetCount = Array.isArray(payload.targets) ? payload.targets.length : 0;
+    let total = 0;
+    if (Array.isArray(payload.counts)) {
+      payload.counts.forEach((row) => {
+        if (Array.isArray(row)) {
+          row.forEach((value) => {
+            total += Number(value) || 0;
+          });
+        }
+      });
+    }
+    setMigrationMatrixStatus(`Loaded ${sourceCount} sources × ${targetCount} targets (${total} transitions).`);
+  } catch (error) {
+    console.error(error);
+    setMigrationMatrixStatus(`Failed to load migration matrix: ${error.message}`, true);
+  } finally {
+    if (migrationMatrixButton) {
+      migrationMatrixButton.disabled = false;
+    }
+  }
+}
+
 function setStatus(message) {
   statusEl.textContent = message;
 }
@@ -4231,6 +4347,13 @@ if (runDiscreteAnalysisButton) {
   runDiscreteAnalysisButton.addEventListener('click', () => {
     runDiscreteAnalysis();
   });
+}
+
+if (migrationMatrixButton) {
+  migrationMatrixButton.addEventListener('click', () => {
+    fetchMigrationMatrix();
+  });
+  fetchMigrationMatrix();
 }
 
 renderComparisonList();

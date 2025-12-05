@@ -15,6 +15,7 @@ from ..services.tree_parser import TreeParseError
 from ..services.tree_service import MCCTreeService
 from ..services.discrete_analysis import get_discrete_analysis_service
 from ..services.comparison_service import get_tree_comparison_service
+from ..services.migration_matrix import build_migration_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -175,3 +176,23 @@ async def compare_discrete_trees(request: DiscreteComparisonRequest) -> Discrete
         return comparison_service.compare(labelled_results, top_k=resolved_top_k)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/analysis/migration/matrix")
+def get_migration_matrix(filename: Optional[str] = None) -> dict[str, object]:
+    try:
+        matrix = build_migration_matrix(filename)
+    except Exception as exc:  # pragma: no cover - defensive catch
+        logger.exception("Failed to build migration matrix")
+        raise HTTPException(status_code=500, detail=f"Unable to build migration matrix: {exc}") from exc
+
+    sources = list(matrix.index)
+    targets = list(matrix.columns)
+    values = matrix.reindex(index=sources, columns=targets, fill_value=0)
+    counts = [[int(value) for value in row] for row in values.to_numpy()]
+
+    return {
+        "sources": sources,
+        "targets": targets,
+        "counts": counts,
+    }

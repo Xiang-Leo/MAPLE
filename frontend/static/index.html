@@ -195,25 +195,6 @@
               </div>
             </div>
           </section>
-          <section class="panel traits" id="traits-panel">
-            <h2>Trait Summary</h2>
-            <div class="trait-controls">
-              <div>
-                <label for="trait-search">Filter traits</label>
-                <input type="text" id="trait-search" placeholder="Search trait" />
-              </div>
-              <div>
-                <label for="trait-limit">Max categories</label>
-                <select id="trait-limit">
-                  <option value="5">Top 5</option>
-                  <option value="10" selected>Top 10</option>
-                  <option value="20">Top 20</option>
-                  <option value="all">Show all</option>
-                </select>
-              </div>
-            </div>
-            <div id="trait-summary"></div>
-          </section>
           <section class="panel" id="discrete-panel">
             <h2>Discrete Pathways</h2>
             <p class="panel-note">Infer root origin probabilities and leading discrete trajectories. Optionally upload BSSVS / Markov jumps logs to merge support.</p>
@@ -337,6 +318,42 @@
                 </table>
               </div>
             </div>
+          </section>
+
+          <section class="panel" id="transition-panel">
+            <h2>State Transition Counts</h2>
+            <p class="panel-note">Preview the mock GeoPandas analysis that aggregates parent/child transitions by country.</p>
+            <div class="analysis-controls">
+              <button id="refresh-migration-matrix" type="button">Generate Matrix</button>
+              <span class="control-hint">Runs the backend demo with simulated lineage coordinates.</span>
+            </div>
+            <span id="migration-matrix-status" class="status-message"></span>
+            <div class="table-scroll">
+              <table class="analysis-table" id="migration-matrix-table">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel traits" id="traits-panel">
+            <h2>Trait Summary</h2>
+            <div class="trait-controls">
+              <div>
+                <label for="trait-search">Filter traits</label>
+                <input type="text" id="trait-search" placeholder="Search trait" />
+              </div>
+              <div>
+                <label for="trait-limit">Max categories</label>
+                <select id="trait-limit">
+                  <option value="5">Top 5</option>
+                  <option value="10" selected>Top 10</option>
+                  <option value="20">Top 20</option>
+                  <option value="all">Show all</option>
+                </select>
+              </div>
+            </div>
+            <div id="trait-summary"></div>
           </section>
         </div>
       </div>
