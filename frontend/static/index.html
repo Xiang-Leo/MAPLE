@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>LocalPhylogeo</title>
+    <title>MAPLE</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
     <header>
-      <h1>LocalPhylogeo</h1>
-      <p>Visualise continuous phylogeographic MCC trees locally.</p>
+      <h1>MAPLE</h1>
+      <p>Migration Annotation of Phylogeographic Lineage Evolution.</p>
     </header>
     <main>
       <div class="workspace" id="workspace">
@@ -71,17 +71,6 @@
                   <option value="increasing" selected>Increasing</option>
                   <option value="decreasing">Decreasing</option>
                 </select>
-              </div>
-              <div class="control-block">
-                <label for="hpd-select">HPD Overlay</label>
-                <select id="hpd-select">
-                  <option value="none" selected>None</option>
-                  <option value="location80">Location 80% HPD</option>
-                </select>
-              </div>
-              <div class="control-block">
-                <label for="hpd-color">HPD Colour</label>
-                <input type="color" id="hpd-color" value="#f97316" />
               </div>
               <div class="control-block">
                 <label for="sort-select">Sort Tips</label>
@@ -183,15 +172,17 @@
                     aria-label="Resize map panel height"
                   ></div>
                 </div>
-              </div>
-            </div>
-            <div class="panel" id="migration-panel">
-              <h2>Migration Timeline</h2>
-              <p class="panel-note">Play or scrub to reveal dispersal events synchronised with the tree.</p>
-              <div class="timeline-controls">
-                <button id="play-migration" type="button" class="ghost-button" disabled>Play</button>
-                <input type="range" id="timeline-slider" min="0" max="1" step="0.01" value="0" disabled />
-                <span id="timeline-label">No timeline</span>
+                <div class="migration-timeline">
+                  <div class="timeline-heading">
+                    <h3>Migration Timeline</h3>
+                    <p class="panel-note">Play or scrub to reveal dispersal events synchronised with the tree.</p>
+                  </div>
+                  <div class="timeline-controls">
+                    <button id="play-migration" type="button" class="ghost-button" disabled>Play</button>
+                    <input type="range" id="timeline-slider" min="0" max="1" step="0.01" value="0" disabled />
+                    <span id="timeline-label">No timeline</span>
+                  </div>
+                </div>
               </div>
             </div>
           </section>

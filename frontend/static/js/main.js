@@ -12,8 +12,6 @@ const toggleLabelsCheckbox = document.getElementById('toggle-labels');
 const resetTreeButton = document.getElementById('reset-tree');
 const sortSelect = document.getElementById('sort-select');
 const colorDirectionSelect = document.getElementById('color-direction');
-const hpdSelect = document.getElementById('hpd-select');
-const hpdColorInput = document.getElementById('hpd-color');
 const latestDateInput = document.getElementById('latest-date');
 const exportTreeButton = document.getElementById('export-tree');
 const exportMapGeoJSONButton = document.getElementById('export-map-geojson');
@@ -91,6 +89,7 @@ let baseTileLayer = null;
 const defaultTileOptions = {
   maxZoom: 18,
   attribution: '© OpenStreetMap contributors',
+  crossOrigin: 'anonymous',
 };
 
 const defaultMapConfig = {
@@ -120,8 +119,6 @@ const vizState = {
   latestDate: null,
   zoomTransform: null,
   tipColor: '#2563eb',
-  hpdMode: 'none',
-  hpdColor: '#f97316',
   legendPosition: null,
   legendScale: 1,
 };
@@ -422,9 +419,7 @@ const mapRenderState = {
   markerMeta: new Map(),
   edgeLayers: [],
   nodeById: new Map(),
-  hpdByNode: new Map(),
   displayedNodeIds: new Set(),
-  hpdLayerGroup: null,
 };
 
 let cachedNodeMap = new Map();
@@ -924,6 +919,15 @@ function isMetadataTraitKey(traitKey) {
   return metadataState.metadataTraits.has(traitKey);
 }
 
+const traitKeyExclusionPattern = /(median|range|hpd)/i;
+
+function shouldExcludeTraitOption(traitKey) {
+  if (!traitKey || typeof traitKey !== 'string') {
+    return false;
+  }
+  return traitKeyExclusionPattern.test(traitKey);
+}
+
 function updateTraitOptions(nodes) {
   if (!colorSelect) {
     return;
@@ -931,6 +935,9 @@ function updateTraitOptions(nodes) {
   traitStatsCache = analyzeTraits(nodes);
   const entries = [];
   traitStatsCache.forEach((info, key) => {
+    if (shouldExcludeTraitOption(key)) {
+      return;
+    }
     const isNumeric = info.type === 'numeric';
     const isCategorical = info.type === 'categorical';
     const allowLargeCategory = isMetadataTraitKey(key);
@@ -1594,6 +1601,10 @@ function normalizeMapConfig(rawConfig) {
     }
   });
 
+  if (typeof options.crossOrigin === 'undefined') {
+    options.crossOrigin = 'anonymous';
+  }
+
   const mapName = typeof rawConfig.name === 'string' && rawConfig.name.trim()
     ? rawConfig.name.trim()
     : 'Custom map';
@@ -1645,20 +1656,10 @@ function ensureMap() {
       baseTileLayer.bringToBack();
     }
     currentMapConfig = normalizedDefault;
-    const hpdPane = leafletMap.createPane('hpdPane');
-    hpdPane.style.zIndex = '450';
-    hpdPane.style.pointerEvents = 'none';
     geoLayerGroup = L.layerGroup().addTo(leafletMap);
-    mapRenderState.hpdLayerGroup = L.layerGroup().addTo(leafletMap);
     animationLayerGroup = L.layerGroup().addTo(leafletMap);
     selectionLayerGroup = L.layerGroup().addTo(leafletMap);
     return leafletMap;
-  }
-
-  if (!leafletMap.getPane('hpdPane')) {
-    const pane = leafletMap.createPane('hpdPane');
-    pane.style.zIndex = '450';
-    pane.style.pointerEvents = 'none';
   }
 
   if (baseTileLayer && !leafletMap.hasLayer(baseTileLayer)) {
@@ -1672,11 +1673,6 @@ function ensureMap() {
     geoLayerGroup = L.layerGroup().addTo(leafletMap);
   } else {
     geoLayerGroup.addTo(leafletMap);
-  }
-  if (!mapRenderState.hpdLayerGroup) {
-    mapRenderState.hpdLayerGroup = L.layerGroup().addTo(leafletMap);
-  } else {
-    mapRenderState.hpdLayerGroup.addTo(leafletMap);
   }
   if (!animationLayerGroup) {
     animationLayerGroup = L.layerGroup().addTo(leafletMap);
@@ -1713,73 +1709,6 @@ function extractCoordinates(node) {
     return [lat, lon];
   }
   return null;
-}
-
-function toNumericArray(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const numeric = [];
-  value.forEach((entry) => {
-    const num = Number(entry);
-    if (Number.isFinite(num)) {
-      numeric.push(num);
-    }
-  });
-  return numeric;
-}
-
-function extractLocationHpdPolygons(node) {
-  const polygons = [];
-  if (!node || !node.traits) {
-    return polygons;
-  }
-  const latBuckets = new Map();
-  const lonBuckets = new Map();
-
-  Object.entries(node.traits).forEach(([key, rawValue]) => {
-    const match = /^location([12])_80%HPD_(\d+)$/.exec(key);
-    if (!match) {
-      return;
-    }
-    const axis = match[1];
-    const bucketKey = match[2];
-    const numericValues = toNumericArray(rawValue);
-    if (!numericValues.length) {
-      return;
-    }
-    if (axis === '1') {
-      latBuckets.set(bucketKey, numericValues);
-    } else if (axis === '2') {
-      lonBuckets.set(bucketKey, numericValues);
-    }
-  });
-
-  latBuckets.forEach((latList, bucketKey) => {
-    const lonList = lonBuckets.get(bucketKey);
-    if (!lonList || latList.length !== lonList.length || latList.length < 3) {
-      return;
-    }
-    const coords = [];
-    for (let i = 0; i < latList.length; i += 1) {
-      const lat = latList[i];
-      const lon = lonList[i];
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        coords.push([lat, lon]);
-      }
-    }
-    if (coords.length < 3) {
-      return;
-    }
-    const [firstLat, firstLon] = coords[0];
-    const [lastLat, lastLon] = coords[coords.length - 1];
-    if (Math.abs(firstLat - lastLat) > 1e-6 || Math.abs(firstLon - lastLon) > 1e-6) {
-      coords.push([firstLat, firstLon]);
-    }
-    polygons.push(coords);
-  });
-
-  return polygons;
 }
 
 function buildNodePopup(node, approxYear = null) {
@@ -1839,16 +1768,12 @@ function renderMap(payload) {
   if (selectionLayerGroup) {
     selectionLayerGroup.clearLayers();
   }
-  if (mapRenderState.hpdLayerGroup) {
-    mapRenderState.hpdLayerGroup.clearLayers();
-  }
 
   nodeCoordinateCache = new Map();
   mapRenderState.markers = new Map();
   mapRenderState.markerMeta = new Map();
   mapRenderState.edgeLayers = [];
   mapRenderState.nodeById = new Map();
-  mapRenderState.hpdByNode = new Map();
   mapRenderState.displayedNodeIds = new Set();
 
   const coords = [];
@@ -1857,10 +1782,6 @@ function renderMap(payload) {
 
   payload.nodes.forEach((node) => {
     mapRenderState.nodeById.set(node.id, node);
-    const hpdPolygons = extractLocationHpdPolygons(node);
-    if (hpdPolygons.length) {
-      mapRenderState.hpdByNode.set(node.id, hpdPolygons);
-    }
     const point = extractCoordinates(node);
     if (!point) {
       return;
@@ -2074,27 +1995,43 @@ function downloadMapGeoJSON() {
   downloadBlob(blob, 'map-trajectories.geojson');
 }
 
-function downloadMapImage() {
+function waitForMapRenderCompletion() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve);
+    });
+  });
+}
+
+async function downloadMapImage() {
   if (!leafletMap) {
     setStatus('Map is not available to export.');
     return;
   }
+  if (!window.html2canvas) {
+    setStatus('html2canvas is required to export map images.');
+    return;
+  }
   try {
-    leafletMap.once('idle', () => {
-      leafletMap.invalidateSize();
-    });
     const container = leafletMap.getContainer();
-    if (!window.html2canvas) {
-      setStatus('html2canvas is required to export map images.');
-      return;
-    }
-    html2canvas(container).then((canvas) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          downloadBlob(blob, 'map.png');
+    await waitForMapRenderCompletion();
+    const canvas = await window.html2canvas(container, {
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: null,
+      scale: window.devicePixelRatio || 1,
+      logging: false,
+    });
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((value) => {
+        if (value) {
+          resolve(value);
+        } else {
+          reject(new Error('Canvas did not produce a blob.'));
         }
       }, 'image/png');
     });
+    downloadBlob(blob, 'map.png');
   } catch (error) {
     console.error(error);
     setStatus('Failed to render map image.');
@@ -2429,7 +2366,7 @@ function resetMapViewport() {
     return;
   }
   const coords = [];
-  if (nodeCoordinateCache instanceof Map) {
+  if (nodeCoordinateCache instanceof Map && nodeCoordinateCache.size > 0) {
     nodeCoordinateCache.forEach((coord) => {
       if (Array.isArray(coord)
         && coord.length === 2
@@ -2439,12 +2376,52 @@ function resetMapViewport() {
       }
     });
   }
+  if (!coords.length && mapRenderState.markerMeta instanceof Map && mapRenderState.markerMeta.size > 0) {
+    mapRenderState.markerMeta.forEach((meta, id) => {
+      const marker = mapRenderState.markers.get(id);
+      if (marker && typeof marker.getLatLng === 'function') {
+        const latLng = marker.getLatLng();
+        if (latLng && Number.isFinite(latLng.lat) && Number.isFinite(latLng.lng)) {
+          coords.push([latLng.lat, latLng.lng]);
+          return;
+        }
+      }
+      if (meta?.node) {
+        const coord = extractCoordinates(meta.node);
+        if (Array.isArray(coord)
+          && coord.length === 2
+          && Number.isFinite(coord[0])
+          && Number.isFinite(coord[1])) {
+          coords.push(coord);
+        }
+      }
+    });
+  }
   if (coords.length && window.L && typeof window.L.latLngBounds === 'function') {
     const bounds = window.L.latLngBounds(coords.map(([lat, lon]) => window.L.latLng(lat, lon)));
     mapInstance.fitBounds(bounds, { padding: [20, 20] });
+    if (typeof mapInstance.invalidateSize === 'function') {
+      setTimeout(() => mapInstance.invalidateSize(), 150);
+    }
     return;
   }
   mapInstance.setView([0, 0], 2);
+  if (typeof mapInstance.invalidateSize === 'function') {
+    setTimeout(() => mapInstance.invalidateSize(), 150);
+  }
+}
+
+function resetTreeAndMapView() {
+  resetTreeView();
+  resetMapViewport();
+  if (animationState.playing) {
+    pauseMigrationAnimation();
+  }
+  if (animationState.domain && Number.isFinite(animationState.domain.min)) {
+    animationState.currentYear = animationState.domain.min;
+  }
+  animationState.useTimelineFilter = false;
+  refreshMigrationLayer();
 }
 
 function toggleNodeSelection(nodeId, additive = false) {
@@ -2718,9 +2695,6 @@ function updateBaseMarkerVisibility() {
     && mapRenderState.markerMeta.size > 0;
   if (!hasMarkers) {
     mapRenderState.displayedNodeIds = new Set();
-    if (mapRenderState.hpdLayerGroup) {
-      mapRenderState.hpdLayerGroup.clearLayers();
-    }
     return;
   }
   const hasTimeline = Boolean(animationState.domain)
@@ -2734,6 +2708,7 @@ function updateBaseMarkerVisibility() {
   const brushActive = Boolean(brushState.enabled);
   const selectedIds = selectionState.nodeIds instanceof Set ? selectionState.nodeIds : new Set();
   const hasSelection = selectedIds.size > 0;
+  const hideAncestorsByDefault = !applyFilter;
   const visibleNodeIds = new Set();
 
   mapRenderState.markerMeta.forEach((meta, id) => {
@@ -2749,6 +2724,10 @@ function updateBaseMarkerVisibility() {
       if (!hasSelection || !selectedIds.has(id)) {
         visible = false;
       }
+    }
+
+    if (visible && hideAncestorsByDefault && !meta.isLeaf && !(hasSelection && selectedIds.has(id))) {
+      visible = false;
     }
 
     if (visible && applyFilter) {
@@ -2807,7 +2786,6 @@ function updateBaseMarkerVisibility() {
     selectedIds,
     visibleNodeIds,
   });
-  refreshHpdOverlay();
 }
 
 function updateEdgeVisibility(config) {
@@ -2860,55 +2838,6 @@ function updateEdgeVisibility(config) {
       opacity: entry.baseStyle.opacity,
       weight: entry.baseStyle.weight,
       color: entry.baseStyle.color,
-    });
-  });
-}
-
-function refreshHpdOverlay() {
-  const layerGroup = mapRenderState.hpdLayerGroup;
-  if (!layerGroup) {
-    return;
-  }
-  layerGroup.clearLayers();
-  if (vizState.hpdMode !== 'location80') {
-    return;
-  }
-  const visibleNodeIds = mapRenderState.displayedNodeIds instanceof Set
-    ? mapRenderState.displayedNodeIds
-    : null;
-  if (!visibleNodeIds || !visibleNodeIds.size) {
-    return;
-  }
-  const applyTimeline = Boolean(animationState.domain)
-    && animationState.useTimelineFilter
-    && Number.isFinite(animationState.currentYear);
-  const appearanceById = animationState.appearanceById instanceof Map ? animationState.appearanceById : null;
-  const cutoff = applyTimeline ? animationState.currentYear : null;
-
-  const fillColor = vizState.hpdColor || '#f97316';
-  visibleNodeIds.forEach((id) => {
-    const polygons = mapRenderState.hpdByNode.get(id);
-    if (!polygons || !polygons.length) {
-      return;
-    }
-    if (applyTimeline && cutoff !== null && appearanceById && appearanceById.has(id)) {
-      const appearance = appearanceById.get(id);
-      if (!Number.isFinite(appearance.year) || appearance.year > cutoff + 1e-6) {
-        return;
-      }
-    }
-    polygons.forEach((coords) => {
-      const polygon = L.polygon(coords, {
-        color: fillColor,
-        weight: 1,
-        opacity: 0.65,
-        fillColor,
-        fillOpacity: 0.5,
-        pane: 'hpdPane',
-        interactive: false,
-        smoothFactor: 0.5,
-      });
-      layerGroup.addLayer(polygon);
     });
   });
 }
@@ -3175,6 +3104,7 @@ function refreshMigrationLayer() {
   const cutoff = animationState.currentYear;
   const selected = selectionState.nodeIds;
   const filterBySelection = selected && selected.size > 0;
+  const nodeLookup = mapRenderState.nodeById instanceof Map ? mapRenderState.nodeById : null;
 
   animationState.nodeAppearances.forEach((appearance) => {
     if (appearance.year > cutoff) {
@@ -3183,16 +3113,18 @@ function refreshMigrationLayer() {
     if (filterBySelection && !selected.has(appearance.id)) {
       return;
     }
+    const appearanceColor = appearance.node ? getNodeColor(appearance.node) : '#0f172a';
     animationLayerGroup.addLayer(L.circleMarker(appearance.coord, {
       radius: Math.max(vizState.nodeRadius + 1, 5),
-      color: '#0f172a',
+      color: appearanceColor,
       weight: 1.2,
-      fillColor: '#fb7185',
+      fillColor: appearanceColor,
       fillOpacity: 0.85,
     }));
   });
 
   let latestEvent = null;
+  let latestEventColor = null;
   animationState.events.forEach((event) => {
     if (event.endYear > cutoff) {
       return;
@@ -3200,19 +3132,22 @@ function refreshMigrationLayer() {
     if (filterBySelection && (!selected.has(event.parentId) || !selected.has(event.childId))) {
       return;
     }
+    const childNode = nodeLookup ? nodeLookup.get(event.childId) : null;
+    const eventColor = childNode ? getNodeColor(childNode) : '#2563eb';
     animationLayerGroup.addLayer(L.polyline([event.startCoord, event.endCoord], {
-      color: '#2563eb',
+      color: eventColor,
       weight: 2.4,
       opacity: 0.7,
     }));
     if (!latestEvent || event.endYear > latestEvent.endYear) {
       latestEvent = event;
+      latestEventColor = eventColor;
     }
   });
 
   if (latestEvent) {
     animationLayerGroup.addLayer(L.polyline([latestEvent.startCoord, latestEvent.endCoord], {
-      color: '#be123c',
+      color: latestEventColor || '#be123c',
       weight: 3.2,
       opacity: 0.85,
     }));
@@ -3503,12 +3438,6 @@ async function render(forceFetch = true, filename = null) {
       }
       if (colorDirectionSelect) {
         colorDirectionSelect.value = vizState.colorDirection;
-      }
-      if (hpdSelect) {
-        hpdSelect.value = vizState.hpdMode || 'none';
-      }
-      if (hpdColorInput) {
-        hpdColorInput.value = vizState.hpdColor || '#f97316';
       }
       if (latestDateInput) {
         latestDateInput.value = vizState.latestDate instanceof Date
@@ -4435,8 +4364,7 @@ if (toggleLabelsCheckbox) {
 
 if (resetTreeButton) {
   resetTreeButton.addEventListener('click', () => {
-    resetTreeView();
-    resetMapViewport();
+    resetTreeAndMapView();
   });
 }
 
@@ -4451,23 +4379,6 @@ if (colorDirectionSelect) {
   colorDirectionSelect.addEventListener('change', (event) => {
     vizState.colorDirection = event.target.value || 'increasing';
     refreshVisualizations();
-  });
-}
-
-if (hpdSelect) {
-  hpdSelect.addEventListener('change', (event) => {
-    vizState.hpdMode = event.target.value || 'none';
-    refreshHpdOverlay();
-  });
-}
-
-if (hpdColorInput) {
-  hpdColorInput.addEventListener('input', (event) => {
-    const value = typeof event.target.value === 'string' ? event.target.value : '';
-    if (value) {
-      vizState.hpdColor = value;
-      refreshHpdOverlay();
-    }
   });
 }
 
