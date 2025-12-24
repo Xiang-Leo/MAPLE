@@ -1,6 +1,6 @@
-# LocalPhylogeo
+# MAPLE
 
-LocalPhylogeo provides a local viewer for continuous phylogeographic MCC trees. The FastAPI backend parses BEAST-generated MCC tree files and exposes JSON endpoints, while the static frontend renders time-scaled phylogenies, geographic spread, and trait summaries directly in the browser.
+Migration Annotation of Phylogeographic Lineage Evolution (MAPLE) provides a local viewer for continuous phylogeographic MCC trees. The FastAPI backend parses BEAST-generated MCC tree files and exposes JSON endpoints, while the static frontend renders time-scaled phylogenies, geographic spread, and trait summaries directly in the browser.
 
 ## Feature Overview
 
@@ -14,7 +14,7 @@ LocalPhylogeo provides a local viewer for continuous phylogeographic MCC trees. 
 ## Project Layout
 
 ```
-LocalPhylogeo/
+MAPLE/
 ├── backend/
 │   ├── app/
 │   │   ├── api/            # REST API routes
@@ -117,3 +117,9 @@ Example JSON configuration:
 - Place sample MCC trees in `data/` for quick reloads during development.
 
 Contributions and feature requests are always welcome—tailor the tool to suit your analyses.
+
+### Some Custom Map Links
+
+* OpenStreetMap: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+* OpenTopoMap: https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png
+* CartoDB (Positron): https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png

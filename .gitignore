@@ -3,3 +3,6 @@
 tests/
 .venv/
 README-CN.md
+投稿与功能优化路线图.md
+data/
+tree_payload.json

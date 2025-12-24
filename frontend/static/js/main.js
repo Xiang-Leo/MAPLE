@@ -51,8 +51,6 @@ const downloadGeojsonLink = document.getElementById('download-geojson');
 const downloadSummaryLink = document.getElementById('download-summary');
 const mapTileUrlInput = document.getElementById('map-tile-url');
 const applyMapLinkButton = document.getElementById('apply-map-link');
-const mapConfigInput = document.getElementById('map-config-file');
-const applyMapConfigButton = document.getElementById('apply-map-config');
 const resetMapButton = document.getElementById('reset-map');
 const mapStatusEl = document.getElementById('map-status');
 const treeMapContainer = document.getElementById('tree-map-container');
@@ -398,6 +396,15 @@ const brushState = {
   enabled: false,
   selectedIds: new Set(),
 };
+
+const selectionHighlightColor = '#be123c';
+
+function getSelectedNodeIdsSnapshot() {
+  if (!(selectionState.nodeIds instanceof Set) || selectionState.nodeIds.size === 0) {
+    return null;
+  }
+  return new Set(selectionState.nodeIds);
+}
 
 const treeRenderState = {
   nodes: [],
@@ -921,11 +928,22 @@ function isMetadataTraitKey(traitKey) {
 
 const traitKeyExclusionPattern = /(median|range|hpd)/i;
 
+function normalizeTraitKey(traitKey) {
+  if (!traitKey || typeof traitKey !== 'string') {
+    return '';
+  }
+  return traitKey.toLowerCase().replace(/[%\s-]+/g, '');
+}
+
 function shouldExcludeTraitOption(traitKey) {
   if (!traitKey || typeof traitKey !== 'string') {
     return false;
   }
-  return traitKeyExclusionPattern.test(traitKey);
+  if (isMetadataTraitKey(traitKey)) {
+    return false;
+  }
+  const normalized = normalizeTraitKey(traitKey);
+  return traitKeyExclusionPattern.test(normalized);
 }
 
 function updateTraitOptions(nodes) {
@@ -1433,6 +1451,8 @@ function renderTree(payload) {
     .data(linkData, (d) => `${d.source.data.id}-${d.target.data.id}`)
     .join('path')
     .attr('class', 'branch')
+    .attr('data-parent-id', (d) => (d?.source?.data?.id ? d.source.data.id : null))
+    .attr('data-child-id', (d) => (d?.target?.data?.id ? d.target.data.id : null))
     .attr('d', (d) => branchPath(d.points))
     .attr('opacity', 0.85);
 
@@ -1440,6 +1460,7 @@ function renderTree(payload) {
     .selectAll('g')
     .data(descendants)
     .join('g')
+    .attr('data-node-id', (d) => (d?.data?.id ? d.data.id : null))
     .attr('transform', (d) => `translate(${d.y},${d.x})`);
 
   const nodeRadius = vizState.nodeRadius;
@@ -1917,6 +1938,77 @@ function renderMigrationMatrixTable(matrixPayload) {
   });
 }
 
+function resolveDownloadPayload(basePayload) {
+  if (!basePayload) {
+    return { payload: null, usingSelection: false, selectedIds: null };
+  }
+  const selectedIds = getSelectedNodeIdsSnapshot();
+  if (!selectedIds || !selectedIds.size) {
+    return { payload: basePayload, usingSelection: false, selectedIds: null };
+  }
+  const nodes = Array.isArray(basePayload.nodes) ? basePayload.nodes : [];
+  const edges = Array.isArray(basePayload.edges) ? basePayload.edges : [];
+  const filteredNodes = nodes.filter((node) => node && selectedIds.has(node.id));
+  if (!filteredNodes.length) {
+    return { payload: basePayload, usingSelection: false, selectedIds: null };
+  }
+  const allowedIds = new Set(filteredNodes.map((node) => node.id));
+  const filteredEdges = edges.filter((edge) => allowedIds.has(edge.parent_id) && allowedIds.has(edge.child_id));
+  return {
+    payload: {
+      nodes: filteredNodes,
+      edges: filteredEdges,
+      metadata: basePayload.metadata,
+    },
+    usingSelection: true,
+    selectedIds,
+  };
+}
+
+function removeBrushLayerFromSvg(svgNode) {
+  if (!svgNode) {
+    return;
+  }
+  svgNode.querySelectorAll('.tree-brush-layer').forEach((element) => {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  });
+}
+
+function pruneSvgToSelection(svgNode, selectedIds) {
+  if (!svgNode || !(selectedIds instanceof Set) || !selectedIds.size) {
+    return false;
+  }
+  let matched = false;
+  svgNode.querySelectorAll('[data-node-id]').forEach((element) => {
+    const nodeId = element.getAttribute('data-node-id');
+    if (!nodeId) {
+      return;
+    }
+    if (!selectedIds.has(nodeId)) {
+      if (element.parentNode) {
+        element.parentNode.removeChild(element);
+      }
+    } else {
+      matched = true;
+    }
+  });
+  svgNode.querySelectorAll('[data-parent-id]').forEach((element) => {
+    const parentId = element.getAttribute('data-parent-id');
+    const childId = element.getAttribute('data-child-id');
+    if (!parentId || !childId) {
+      return;
+    }
+    if (!selectedIds.has(parentId) || !selectedIds.has(childId)) {
+      if (element.parentNode) {
+        element.parentNode.removeChild(element);
+      }
+    }
+  });
+  return matched;
+}
+
 function downloadTreeSVG() {
   if (!treeSvgElement) {
     setStatus('Tree SVG not available.');
@@ -1924,11 +2016,17 @@ function downloadTreeSVG() {
   }
   const serializer = new XMLSerializer();
   const cloned = treeSvgElement.cloneNode(true);
+  removeBrushLayerFromSvg(cloned);
+  const { selectedIds, usingSelection } = resolveDownloadPayload(cachedPayload);
+  if (usingSelection && selectedIds) {
+    pruneSvgToSelection(cloned, selectedIds);
+  }
   cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
   const svgString = serializer.serializeToString(cloned);
   const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-  downloadBlob(blob, 'tree.svg');
+  downloadBlob(blob, usingSelection ? 'tree-selection.svg' : 'tree.svg');
+  setStatus(usingSelection ? 'Downloaded SVG for selected branch.' : 'Downloaded complete tree SVG.');
 }
 
 function buildMapGeoJSON(payload) {
@@ -1985,14 +2083,320 @@ function buildMapGeoJSON(payload) {
   };
 }
 
+function getCanvasScaleFactor() {
+  const scale = window.devicePixelRatio || 1;
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return 1;
+  }
+  return Math.min(Math.max(scale, 1), 2.5);
+}
+
+function getLeafletTileImages() {
+  if (!leafletMap) {
+    return [];
+  }
+  const panes = leafletMap.getPanes && leafletMap.getPanes();
+  if (!panes || !panes.tilePane) {
+    return [];
+  }
+  return Array.from(panes.tilePane.querySelectorAll('img.leaflet-tile'));
+}
+
+function getMapPaneOffset() {
+  if (!leafletMap) {
+    return { x: 0, y: 0 };
+  }
+  if (typeof leafletMap._getMapPanePos === 'function') {
+    const pos = leafletMap._getMapPanePos();
+    return { x: pos?.x || 0, y: pos?.y || 0 };
+  }
+  const panes = leafletMap.getPanes && leafletMap.getPanes();
+  const mapPane = panes?.mapPane;
+  if (mapPane) {
+    const domUtil = window.L && window.L.DomUtil;
+    const panePos = mapPane._leaflet_pos || (domUtil && typeof domUtil.getPosition === 'function'
+      ? domUtil.getPosition(mapPane)
+      : null);
+    if (panePos) {
+      return { x: panePos.x || 0, y: panePos.y || 0 };
+    }
+  }
+  return { x: 0, y: 0 };
+}
+
+async function waitForLeafletTilesReady(timeoutMs = 1200) {
+  const tiles = getLeafletTileImages();
+  const pending = tiles.filter((tile) => !tile.complete || !tile.naturalWidth);
+  if (!pending.length) {
+    return;
+  }
+  await Promise.race([
+    Promise.all(pending.map((tile) => new Promise((resolve) => {
+      const handle = () => {
+        tile.removeEventListener('load', handle);
+        tile.removeEventListener('error', handle);
+        resolve();
+      };
+      tile.addEventListener('load', handle, { once: true });
+      tile.addEventListener('error', handle, { once: true });
+    }))),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+function drawTilesOnCanvas(ctx) {
+  if (!leafletMap || !ensureLeaflet()) {
+    return;
+  }
+  const tiles = getLeafletTileImages();
+  const paneOffset = getMapPaneOffset();
+  tiles.forEach((tile) => {
+    const domUtil = window.L && window.L.DomUtil;
+    const position = tile._leaflet_pos || (domUtil && typeof domUtil.getPosition === 'function'
+      ? domUtil.getPosition(tile)
+      : null);
+    if (!position) {
+      return;
+    }
+    const width = tile.naturalWidth || tile.width || 256;
+    const height = tile.naturalHeight || tile.height || 256;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(tile, position.x + paneOffset.x, position.y + paneOffset.y, width, height);
+    ctx.restore();
+  });
+}
+
+function drawMapEdgesOnCanvas(ctx, edges, selectedIds = null) {
+  if (!leafletMap || !Array.isArray(edges)) {
+    return;
+  }
+  edges.forEach((edge) => {
+    const parentCoord = nodeCoordinateCache.get(edge.parent_id);
+    const childCoord = nodeCoordinateCache.get(edge.child_id);
+    if (!parentCoord || !childCoord) {
+      return;
+    }
+    const startLatLng = Array.isArray(parentCoord)
+      ? (window.L && typeof window.L.latLng === 'function'
+        ? window.L.latLng(parentCoord[0], parentCoord[1])
+        : { lat: parentCoord[0], lng: parentCoord[1] })
+      : parentCoord;
+    const endLatLng = Array.isArray(childCoord)
+      ? (window.L && typeof window.L.latLng === 'function'
+        ? window.L.latLng(childCoord[0], childCoord[1])
+        : { lat: childCoord[0], lng: childCoord[1] })
+      : childCoord;
+    const start = leafletMap.latLngToContainerPoint(startLatLng);
+    const end = leafletMap.latLngToContainerPoint(endLatLng);
+    if (!start || !end) {
+      return;
+    }
+    const isSelected = selectedIds instanceof Set
+      && selectedIds.has(edge.parent_id)
+      && selectedIds.has(edge.child_id);
+    ctx.save();
+    ctx.globalAlpha = isSelected ? 0.95 : 0.35;
+    ctx.lineWidth = isSelected ? 2.6 : 1.2;
+    ctx.strokeStyle = isSelected ? selectionHighlightColor : '#334155';
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawMapMarkersOnCanvas(ctx, nodes, selectedIds = null) {
+  if (!leafletMap || !Array.isArray(nodes)) {
+    return;
+  }
+  nodes.forEach((node) => {
+    const coord = nodeCoordinateCache.get(node.id);
+    if (!coord) {
+      return;
+    }
+    const latLng = Array.isArray(coord)
+      ? (window.L && typeof window.L.latLng === 'function'
+        ? window.L.latLng(coord[0], coord[1])
+        : { lat: coord[0], lng: coord[1] })
+      : coord;
+    const point = leafletMap.latLngToContainerPoint(latLng);
+    if (!point) {
+      return;
+    }
+    const meta = mapRenderState.markerMeta.get(node.id) || {};
+    const baseStyle = meta.baseStyle || {};
+    const isLeaf = typeof meta.isLeaf === 'boolean'
+      ? meta.isLeaf
+      : (treeRenderState.leafIdSet instanceof Set && treeRenderState.leafIdSet.has(node.id));
+    const selected = selectedIds instanceof Set && selectedIds.has(node.id);
+    const radius = Math.max(baseStyle.radius || (isLeaf ? vizState.nodeRadius + 1 : vizState.nodeRadius + 2), isLeaf ? 3 : 5);
+    const strokeColor = selected ? selectionHighlightColor : (baseStyle.color || (isLeaf ? getNodeColor(node) : '#0f172a'));
+    const fillColor = isLeaf
+      ? (selected ? selectionHighlightColor : (baseStyle.fillColor || getNodeColor(node)))
+      : '#ffffff';
+    const opacity = selected ? 0.95 : (baseStyle.opacity ?? 0.85);
+    const lineWidth = (baseStyle.weight || (isLeaf ? 1.2 : 1.6)) + (selected ? 0.8 : 0);
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = strokeColor;
+    ctx.fillStyle = fillColor;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    if (isLeaf) {
+      ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fill();
+    }
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawMigrationTimelineOnCanvas(ctx, selectedIds = null) {
+  if (!leafletMap || !animationState.domain || !Number.isFinite(animationState.currentYear)) {
+    return;
+  }
+  const cutoff = animationState.currentYear;
+  const filterBySelection = selectedIds instanceof Set && selectedIds.size > 0;
+  const nodeLookup = mapRenderState.nodeById instanceof Map ? mapRenderState.nodeById : null;
+
+  const toPoint = (coord) => {
+    if (!coord) {
+      return null;
+    }
+    const latLng = Array.isArray(coord)
+      ? (window.L && typeof window.L.latLng === 'function'
+        ? window.L.latLng(coord[0], coord[1])
+        : { lat: coord[0], lng: coord[1] })
+      : coord;
+    return leafletMap.latLngToContainerPoint(latLng);
+  };
+
+  const appearances = Array.isArray(animationState.nodeAppearances) ? animationState.nodeAppearances : [];
+  appearances.forEach((appearance) => {
+    if (!Number.isFinite(appearance.year) || appearance.year > cutoff) {
+      return;
+    }
+    if (filterBySelection && !selectedIds.has(appearance.id)) {
+      return;
+    }
+    const point = toPoint(appearance.coord);
+    if (!point) {
+      return;
+    }
+    const color = appearance.node ? getNodeColor(appearance.node) : '#0f172a';
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, Math.max(vizState.nodeRadius + 1, 5), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  const events = Array.isArray(animationState.events) ? animationState.events : [];
+  let latestEvent = null;
+  events.forEach((event) => {
+    if (!Number.isFinite(event.endYear) || event.endYear > cutoff) {
+      return;
+    }
+    if (filterBySelection && (!selectedIds.has(event.parentId) || !selectedIds.has(event.childId))) {
+      return;
+    }
+    const startPoint = toPoint(event.startCoord);
+    const endPoint = toPoint(event.endCoord);
+    if (!startPoint || !endPoint) {
+      return;
+    }
+    const childNode = nodeLookup ? nodeLookup.get(event.childId) : null;
+    const eventColor = childNode ? getNodeColor(childNode) : '#2563eb';
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = eventColor;
+    ctx.beginPath();
+    ctx.moveTo(startPoint.x, startPoint.y);
+    ctx.lineTo(endPoint.x, endPoint.y);
+    ctx.stroke();
+    ctx.restore();
+    if (!latestEvent || event.endYear > latestEvent.endYear) {
+      latestEvent = { ...event, color: eventColor };
+    }
+  });
+
+  if (latestEvent) {
+    const startPoint = toPoint(latestEvent.startCoord);
+    const endPoint = toPoint(latestEvent.endCoord);
+    if (startPoint && endPoint) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = latestEvent.color || selectionHighlightColor;
+      ctx.beginPath();
+      ctx.moveTo(startPoint.x, startPoint.y);
+      ctx.lineTo(endPoint.x, endPoint.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+async function renderMapCanvas(payload, selectedIds = null) {
+  if (!leafletMap) {
+    throw new Error('Map is not ready.');
+  }
+  const size = leafletMap.getSize();
+  const scale = getCanvasScaleFactor();
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(size.x * scale));
+  canvas.height = Math.max(1, Math.round(size.y * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, size.x, size.y);
+  await waitForLeafletTilesReady();
+  drawTilesOnCanvas(ctx);
+  const edges = payload && Array.isArray(payload.edges) ? payload.edges : [];
+  const nodes = payload && Array.isArray(payload.nodes) ? payload.nodes : [];
+  drawMapEdgesOnCanvas(ctx, edges, selectedIds);
+  drawMigrationTimelineOnCanvas(ctx, selectedIds);
+  drawMapMarkersOnCanvas(ctx, nodes, selectedIds);
+  return canvas;
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((value) => {
+      if (value) {
+        resolve(value);
+      } else {
+        reject(new Error('Canvas did not produce a blob.'));
+      }
+    }, 'image/png');
+  });
+}
+
 function downloadMapGeoJSON() {
   if (!cachedPayload) {
     setStatus('No tree loaded to export map data.');
     return;
   }
-  const geojson = buildMapGeoJSON(cachedPayload);
+  const { payload, usingSelection } = resolveDownloadPayload(cachedPayload);
+  if (!payload) {
+    setStatus('No data available to export map.');
+    return;
+  }
+  const geojson = buildMapGeoJSON(payload);
   const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json;charset=utf-8' });
-  downloadBlob(blob, 'map-trajectories.geojson');
+  downloadBlob(blob, usingSelection ? 'map-selection.geojson' : 'map-trajectories.geojson');
+  setStatus(usingSelection ? 'Downloaded GeoJSON for selected nodes.' : 'Downloaded full map GeoJSON.');
 }
 
 function waitForMapRenderCompletion() {
@@ -2008,30 +2412,21 @@ async function downloadMapImage() {
     setStatus('Map is not available to export.');
     return;
   }
-  if (!window.html2canvas) {
-    setStatus('html2canvas is required to export map images.');
+  if (!cachedPayload) {
+    setStatus('No tree loaded to export map image.');
+    return;
+  }
+  const { payload, usingSelection, selectedIds } = resolveDownloadPayload(cachedPayload);
+  if (!payload || !Array.isArray(payload.nodes) || !payload.nodes.length) {
+    setStatus('No map data available to export.');
     return;
   }
   try {
-    const container = leafletMap.getContainer();
     await waitForMapRenderCompletion();
-    const canvas = await window.html2canvas(container, {
-      useCORS: true,
-      allowTaint: false,
-      backgroundColor: null,
-      scale: window.devicePixelRatio || 1,
-      logging: false,
-    });
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((value) => {
-        if (value) {
-          resolve(value);
-        } else {
-          reject(new Error('Canvas did not produce a blob.'));
-        }
-      }, 'image/png');
-    });
-    downloadBlob(blob, 'map.png');
+    const canvas = await renderMapCanvas(payload, selectedIds || null);
+    const blob = await canvasToBlob(canvas);
+    downloadBlob(blob, usingSelection ? 'map-selection.png' : 'map.png');
+    setStatus(usingSelection ? 'Downloaded PNG for selected map region.' : 'Downloaded full map PNG.');
   } catch (error) {
     console.error(error);
     setStatus('Failed to render map image.');
@@ -2632,7 +3027,7 @@ function updateMapSelection() {
     updateBaseMarkerVisibility();
     return;
   }
-  const highlightColor = '#be123c';
+  const highlightColor = selectionHighlightColor;
   const nodesById = new Map(cachedPayload.nodes.map((node) => [node.id, node]));
   const leafSet = treeRenderState.leafIdSet || new Set();
   selectionState.nodeIds.forEach((id) => {
@@ -2802,6 +3197,7 @@ function updateEdgeVisibility(config) {
     visibleNodeIds,
   } = config;
   const cutoff = applyFilter && Number.isFinite(currentYear) ? currentYear : null;
+  const enforceNodeVisibility = brushActive || applyFilter || hasSelection;
   mapRenderState.edgeLayers.forEach((entry) => {
     if (!entry || !entry.layer || !entry.baseStyle) {
       return;
@@ -2825,7 +3221,7 @@ function updateEdgeVisibility(config) {
         visible = false;
       }
     }
-    if (visible && visibleNodeIds instanceof Set) {
+    if (visible && enforceNodeVisibility && visibleNodeIds instanceof Set) {
       if (!visibleNodeIds.has(entry.parentId) || !visibleNodeIds.has(entry.childId)) {
         visible = false;
       }
@@ -4467,40 +4863,6 @@ if (applyMapLinkButton) {
   });
 }
 
-if (applyMapConfigButton) {
-  applyMapConfigButton.addEventListener('click', () => {
-    if (!mapConfigInput || !mapConfigInput.files || !mapConfigInput.files.length) {
-      setMapStatus('Choose a JSON configuration file to upload.', true);
-      return;
-    }
-    const file = mapConfigInput.files[0];
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(reader.result);
-        const config = applyBaseMap(parsed);
-        if (mapTileUrlInput) {
-          mapTileUrlInput.value = config.tileUrl;
-        }
-        setMapStatus(`Map config applied${config.name ? ` (${config.name})` : ''}.`);
-      } catch (error) {
-        console.error(error);
-        setMapStatus(`Failed to apply map config: ${error.message}`, true);
-      }
-      if (mapConfigInput) {
-        mapConfigInput.value = '';
-      }
-    };
-    reader.onerror = () => {
-      setMapStatus('Could not read the selected map config file.', true);
-      if (mapConfigInput) {
-        mapConfigInput.value = '';
-      }
-    };
-    reader.readAsText(file);
-  });
-}
-
 if (resetMapButton) {
   resetMapButton.addEventListener('click', () => {
     try {
@@ -4508,9 +4870,6 @@ if (resetMapButton) {
       setMapStatus(`Reverted to default map${config.name ? ` (${config.name})` : ''}.`);
       if (mapTileUrlInput) {
         mapTileUrlInput.value = '';
-      }
-      if (mapConfigInput) {
-        mapConfigInput.value = '';
       }
       resetMapViewport();
     } catch (error) {
