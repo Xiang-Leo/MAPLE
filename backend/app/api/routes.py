@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/health")
+def api_health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 class DiscreteComparisonRequest(BaseModel):
     filenames: list[str] = Field(..., min_items=2, description="List of stored MCC tree filenames to compare.")
     labels: Optional[list[str]] = Field(
